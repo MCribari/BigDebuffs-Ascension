@@ -1,5 +1,15 @@
-# BigDebuffs
-WotLK displays information about controls on frames as icons. ENG and RUS locale.
-![WoWScrnShot_041322_211414](https://user-images.githubusercontent.com/78731609/163246431-77171137-6e40-4311-b9f8-411cc8db52b1.jpg)
-![WoWScrnShot_041322_211417](https://user-images.githubusercontent.com/78731609/163246441-057821d8-5f20-4795-bc68-8d5fe9a746a1.jpg)
-![WoWScrnShot_041322_211426](https://user-images.githubusercontent.com/78731609/163246444-d44e7327-ab0b-4384-8e36-c06c96f54519.jpg)
+# BigDebuffs for Ascension Bronzebeard/Malfurion.
+
+**->** BigDebuffs is an extremely lightweight addon that hooks the Blizzard raid frames to increase the debuff size of crowd control effects. Additionally, it replaces unit frame portraits with debuff durations when important debuffs are present.
+
+### Features:
+- Displays Debuffs on every frame.
+- Fully customizable.
+
+**->** /bd in the chat to open options tab.
+
+Credits: Hannahmckay.
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/850dad85-1dff-4184-8851-dd6a72b39fee" width="350" />
+  <img src="https://github.com/user-attachments/assets/606c8fa3-01ab-4c59-9f79-6bc38e6c988c" width="350" />
+</p>
