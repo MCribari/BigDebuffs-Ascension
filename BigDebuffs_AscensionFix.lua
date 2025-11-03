@@ -1,367 +1,474 @@
--- Fix BigDebuffs for WOW Ascension modified by Hannahmckay
+-- BigDebuffs Ascension Fix - Adaptation for Ascension/Bronzebeard server by Hannahmckay
 
-local InArena = InArena or function() return (select(2, IsInInstance()) == "arena") end
+local addonName, addon = ...
 
-BigDebuffs.SpellsByName = {}
+local frame = CreateFrame("Frame")
+frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("RAID_ROSTER_UPDATE")
 
-function BigDebuffs:BuildSpellNameTable()
-    for spellId, spellData in pairs(self.Spells) do
-        if type(spellId) == "number" then
-            local spellName = GetSpellInfo(spellId)
-            if spellName then
-                if not self.SpellsByName[spellName] then
-                    self.SpellsByName[spellName] = {}
-                end
-                
-                for k, v in pairs(spellData) do
-                    self.SpellsByName[spellName][k] = v
-                end
-                
-                self.SpellsByName[spellName].originalId = spellId
-            end
-        end
-    end
-end
+-- OnUpdate loop 
+local updateFrame = CreateFrame("Frame")
+local pendingAttach = false
 
-
-local TestDebuffs = {}
-
-function BigDebuffs:InsertTestDebuff(spellID)
-    local texture = select(3, GetSpellInfo(spellID))
-    table.insert(TestDebuffs, {spellID, texture})
-end
-
-
-function UnitDebuffTest(unit, index)
-    local debuff = TestDebuffs[index]
-    if not debuff then return end
-    return GetSpellInfo(debuff[1]), nil, debuff[2], 0, "Magic", 30, GetTime() + 30, nil, nil, nil, debuff[1]
-end
-
-
-local original_OnEnable = BigDebuffs.OnEnable
-function BigDebuffs:OnEnable()
-    self:BuildSpellNameTable()
+updateFrame:SetScript("OnUpdate", function(self, elapsed)
+    if not pendingAttach or not _G.BigDebuffsInstance then return end
     
-    self:InsertTestDebuff(10890) -- Psychic Scream test
-    
-    if original_OnEnable then
-        original_OnEnable(self)
-    end
-    
-    BigDebuffs.TestDebuffs = TestDebuffs
-end
-
-function BigDebuffs:GetAuraPriority(name, id, unit)
-    local spellData = self.Spells[id]
-    
-    if not spellData and name then
-        spellData = self.SpellsByName[name]
-        if spellData and spellData.originalId then
-            id = spellData.originalId
-        end
-    end
-    
-    if not spellData then return end
-
-    if spellData.parent then
-        local parentData = self.Spells[spellData.parent]
-        if parentData then
-            id = spellData.parent
-            spellData = parentData
-        else
-            local parentName = GetSpellInfo(spellData.parent)
-            if parentName then
-                parentData = self.SpellsByName[parentName]
-                if parentData and parentData.originalId then
-                    id = parentData.originalId
-                    spellData = parentData
-                end
-            end
-        end
-    end
-
-    if not self.db.profile.unitFrames[unit:gsub("%d", "")][spellData.type] then 
-        return 
-    end
-
-    if self.db.profile.spells[id] then
-        if self.db.profile.spells[id].unitFrames and self.db.profile.spells[id].unitFrames == 0 then 
-            return 
-        end
-        if self.db.profile.spells[id].priority then 
-            return self.db.profile.spells[id].priority 
-        end
-    end
-
-    if spellData.nounitFrames and (not self.db.profile.spells[id] or not self.db.profile.spells[id].unitFrames) then
-        return
-    end
-
-    return self.db.profile.priority[spellData.type] or 0
-end
-
-function BigDebuffs:UNIT_AURA(event, unit)
-    if not self.db.profile.unitFrames.enabled
-    or not unit
-    or not self.db.profile.unitFrames[unit:gsub("%d", "")]
-    or not self.db.profile.unitFrames[unit:gsub("%d", "")].enabled
-    or not self.test and self.db.profile.unitFrames[unit:gsub("%d", "")].inArena and not InArena()
-    then return end
-
-    if unit == "player" then
-        self:UNIT_AURA(nil, "playerFAKE")
-    end
-
-    self:AttachUnitFrame(unit)
-
-    local frame = self.UnitFrames[unit]
-    if not frame then return end
-
-    if unit == "playerFAKE" then
-        unit = string.gsub(unit, "%u", "")
-    end
-
-    local UnitDebuff = self.test and UnitDebuffTest or _G.UnitDebuff
-
-    local now = GetTime()
-    local left, priority, duration, expires, icon, isAura, interrupt, auraType, spellId = 0, 0
-
+    local attached = 0
     for i = 1, 40 do
-        local n, _, ico, _, _, d, e, caster, _, _, id = UnitDebuff(unit, i)
-        if not n then break end
-        
-        if id and (self.Spells[id] or self.SpellsByName[n]) then
-            local p = self:GetAuraPriority(n, id, unit)
+        local compactFrame = _G["CompactRaidFrame" .. i]
+        if compactFrame and compactFrame.displayedUnit then
+            local unit = compactFrame.displayedUnit
+            if UnitExists(unit) and not compactFrame.BigDebuffs then
+                pcall(function()
+                    _G.BigDebuffsInstance:AddBigDebuffs(compactFrame)
+                    attached = attached + 1
+                end)
+            end
+        end
+    end
+    
+    if attached > 0 then
+        pendingAttach = false
+    end
+end)
 
-            if p and p > priority or p == priority and e - now > left then
-                left = e - now
-                duration = d
-                isAura = true
-                priority = p
-                expires = e
-                icon = ico
-                
-                local spellData = self.Spells[id] or self.SpellsByName[n]
-                if spellData then
-                    if spellData.parent then
-                        local parentData = self.Spells[spellData.parent]
-                        if not parentData then
-                            local parentName = GetSpellInfo(spellData.parent)
-                            if parentName then
-                                parentData = self.SpellsByName[parentName]
-                            end
+local function EnableAttachLoop()
+    pendingAttach = true
+end
+
+frame:SetScript("OnEvent", function(self, event, loadedAddon)
+    if event == "ADDON_LOADED" then
+        if loadedAddon ~= "BigDebuffs" then return end
+        
+        local BigDebuffs = LibStub("AceAddon-3.0"):GetAddon("BigDebuffs")
+        if not BigDebuffs then return end
+        
+        BigDebuffs.SpellsByName = {}
+        
+        -- Build spell name table
+        function BigDebuffs:BuildSpellNameTable()
+            for spellId, spellData in pairs(self.Spells) do
+                if type(spellId) == "number" then
+                    local spellName = GetSpellInfo(spellId)
+                    if spellName then
+                        if not self.SpellsByName[spellName] then
+                            self.SpellsByName[spellName] = {}
                         end
-                        if parentData then
-                            spellData = parentData
+                        
+                        
+                        for k, v in pairs(spellData) do
+                            self.SpellsByName[spellName][k] = v
+                        end
+                        
+                        
+                        self.SpellsByName[spellName].originalId = spellId
+                    end
+                end
+            end
+        end
+        
+        
+        local original_OnEnable = BigDebuffs.OnEnable
+        function BigDebuffs:OnEnable()
+            self:BuildSpellNameTable()
+            
+            
+            if original_OnEnable then
+                original_OnEnable(self)
+            end
+            
+            --loop raidframes
+            EnableAttachLoop()
+        end
+        
+        
+        local function FixCooldownFrames()
+            local cooldownMT = getmetatable(CreateFrame("Cooldown"))
+            if cooldownMT and cooldownMT.__index then
+                if not cooldownMT.__index.SetHideCountdownNumbers then
+                    cooldownMT.__index.SetHideCountdownNumbers = function(self, hide)
+                        self.noCooldownCount = hide
+                    end
+                end
+            end
+            
+            if not _G.CompactUnitFrame_HideAllDebuffs then
+                _G.CompactUnitFrame_HideAllDebuffs = function(compactFrame)
+                    if compactFrame and compactFrame.debuffFrames then
+                        for i = 1, #compactFrame.debuffFrames do
+                            compactFrame.debuffFrames[i]:Hide()
                         end
                     end
-                    auraType = spellData.type
                 end
-                
-                spellId = id
+            end
+            
+            if not _G.CompactUnitFrame_UpdateAuras then
+                _G.CompactUnitFrame_UpdateAuras = function(compactFrame)
+                    if compactFrame then
+                        if CompactUnitFrame_UpdateDebuffs then
+                            CompactUnitFrame_UpdateDebuffs(compactFrame)
+                        end
+                        if CompactUnitFrame_UpdateBuffs then
+                            CompactUnitFrame_UpdateBuffs(compactFrame)
+                        end
+                        if BigDebuffs and BigDebuffs.ShowBigDebuffs and compactFrame.BigDebuffs then
+                            BigDebuffs:ShowBigDebuffs(compactFrame)
+                        end
+                    end
+                end
             end
         end
-    end
-
-    for i = 1, 40 do
-        local n, _, ico, _, _, d, e, _, _, _, id = UnitBuff(unit, i)
-        if not n then break end
+        FixCooldownFrames()
         
-        if id == 605 then break end
+        --CompactUnitFrame_SetUnit auto-attach
+        if CompactUnitFrame_SetUnit then
+            hooksecurefunc("CompactUnitFrame_SetUnit", function(compactFrame, unit)
+                if not compactFrame or not unit then return end
+                if not UnitExists(unit) then return end
+                if compactFrame.BigDebuffs then return end
+                if not BigDebuffs then return end
+                
+                pcall(function()
+                    BigDebuffs:AddBigDebuffs(compactFrame)
+                end)
+            end)
+        end
         
-        if id and (self.Spells[id] or self.SpellsByName[n]) then
-            local p = self:GetAuraPriority(n, id, unit)
-            if p and p >= priority then
-                if p and p > priority or p == priority and e - now > left then
-                    left = e - now
-                    duration = d
-                    isAura = true
-                    priority = p
-                    expires = e
-                    icon = ico
-                    
-                    local spellData = self.Spells[id] or self.SpellsByName[n]
-                    if spellData then
-                        if spellData.parent then
-                            local parentData = self.Spells[spellData.parent]
-                            if not parentData then
-                                local parentName = GetSpellInfo(spellData.parent)
-                                if parentName then
-                                    parentData = self.SpellsByName[parentName]
+        -- Hook CompactRaidFrameContainer_ApplyToFrames
+        if CompactRaidFrameContainer_ApplyToFrames then
+            hooksecurefunc("CompactRaidFrameContainer_ApplyToFrames", function()
+                EnableAttachLoop()
+            end)
+        end
+        
+        -- Hook CompactUnitFrame_UpdateAll
+        if CompactUnitFrame_UpdateAll then
+            hooksecurefunc("CompactUnitFrame_UpdateAll", function(compactFrame)
+                if compactFrame and compactFrame.displayedUnit and not compactFrame.BigDebuffs and BigDebuffs then
+                    pcall(function()
+                        BigDebuffs:AddBigDebuffs(compactFrame)
+                    end)
+                end
+            end)
+        end
+        
+        -- Modify GetAuraPriority to search by name if not found by ID
+        local original_GetAuraPriority = BigDebuffs.GetAuraPriority
+        function BigDebuffs:GetAuraPriority(id)
+            local priority = original_GetAuraPriority(self, id)
+            if priority then return priority end
+            
+            
+            if not self.test and type(id) == "number" then
+                local spellName = GetSpellInfo(id)
+                if spellName and self.SpellsByName[spellName] then
+                    local newId = self.SpellsByName[spellName].originalId
+                    if newId and newId ~= id then
+                        return original_GetAuraPriority(self, newId)
+                    end
+                end
+            end
+            
+            return priority
+        end
+        
+        -- Modify GetNameplatesPriority in the same way
+        local original_GetNameplatesPriority = BigDebuffs.GetNameplatesPriority
+        function BigDebuffs:GetNameplatesPriority(id)
+            local priority = original_GetNameplatesPriority(self, id)
+            if priority then return priority end
+            
+            
+            if not self.test and type(id) == "number" then
+                local spellName = GetSpellInfo(id)
+                if spellName and self.SpellsByName[spellName] then
+                    local newId = self.SpellsByName[spellName].originalId
+                    if newId and newId ~= id then
+                        return original_GetNameplatesPriority(self, newId)
+                    end
+                end
+            end
+            
+            return priority
+        end
+        
+        -- Modify GetDebuffSize for raid frames
+        local original_GetDebuffSize = BigDebuffs.GetDebuffSize
+        function BigDebuffs:GetDebuffSize(id, dispellable)
+            local size = original_GetDebuffSize(self, id, dispellable)
+            if size then return size end
+            
+            if not self.test and type(id) == "number" then
+                local spellName = GetSpellInfo(id)
+                if spellName and self.SpellsByName[spellName] then
+                    local newId = self.SpellsByName[spellName].originalId
+                    if newId and newId ~= id then
+                        return original_GetDebuffSize(self, newId, dispellable)
+                    end
+                end
+            end
+            
+            return size
+        end
+        
+        -- Añadir GetDebuffPriority para raid frames
+        local original_GetDebuffPriority = BigDebuffs.GetDebuffPriority
+        function BigDebuffs:GetDebuffPriority(id)
+            local priority = original_GetDebuffPriority(self, id)
+            if priority then return priority end
+            
+            if not self.test and type(id) == "number" then
+                local spellName = GetSpellInfo(id)
+                if spellName and self.SpellsByName[spellName] then
+                    local newId = self.SpellsByName[spellName].originalId
+                    if newId and newId ~= id then
+                        return original_GetDebuffPriority(self, newId)
+                    end
+                end
+            end
+            
+            return priority
+        end
+        
+        -- Añadir IsPriorityBigDebuff para raid frames
+        local original_IsPriorityBigDebuff = BigDebuffs.IsPriorityBigDebuff
+        function BigDebuffs:IsPriorityBigDebuff(id)
+            local isPriority = original_IsPriorityBigDebuff(self, id)
+            if isPriority then return isPriority end
+            
+            if not self.test and type(id) == "number" then
+                local spellName = GetSpellInfo(id)
+                if spellName and self.SpellsByName[spellName] then
+                    local newId = self.SpellsByName[spellName].originalId
+                    if newId and newId ~= id then
+                        return original_IsPriorityBigDebuff(self, newId)
+                    end
+                end
+            end
+            
+            return isPriority
+        end
+        
+        hooksecurefunc(BigDebuffs, "UNIT_AURA", function(self, unit)
+        
+            if self.test then return end
+            
+            local frame = self.UnitFrames[unit]
+            if not frame then return end
+            
+         
+            if frame.current then return end
+            
+            
+            local now = GetTime()
+            local left, priority, duration, expires, icon, debuff, buff = 0, 0
+            
+            for i = 1, 40 do
+                local name, _, ico, _, _, d, e, caster, _, _, id = UnitDebuff(unit, i)
+                if not name then break end
+                
+                
+                if id and not self.Spells[id] and self.SpellsByName[name] then
+                    local mappedId = self.SpellsByName[name].originalId
+                    if mappedId then
+                        local p = self:GetAuraPriority(mappedId)
+                        if p and p >= priority then
+                            if p > priority or e == 0 or e - now > left then
+                                left = e - now
+                                duration = d
+                                debuff = i
+                                priority = p
+                                expires = e
+                                icon = ico
+                            end
+                        end
+                    end
+                end
+            end
+            
+            for i = 1, 40 do
+                local name, _, ico, _, _, d, e, caster, _, _, id = UnitBuff(unit, i)
+                if not name then break end
+                
+                
+                if id and not self.Spells[id] and self.SpellsByName[name] then
+                    local mappedId = self.SpellsByName[name].originalId
+                    if mappedId then
+                        local p = self:GetAuraPriority(mappedId)
+                        if p and p >= priority then
+                            if p > priority or e == 0 or e - now > left then
+                                left = e - now
+                                duration = d
+                                debuff = i
+                                priority = p
+                                expires = e
+                                icon = ico
+                                buff = true
+                            end
+                        end
+                    end
+                end
+            end
+            
+            
+            if debuff and not frame.current then
+                if frame.blizzard then
+                    frame.icon:SetTexture(icon)
+                    frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                    frame.icon:Show()
+                    frame.icon:SetAlpha(1)
+                    SetPortraitToTexture(frame.icon, icon)
+                else
+                    frame.icon:SetTexture(icon)
+                    frame.icon:SetTexCoord(0, 1, 0, 1)
+                end
+                
+                CooldownFrame_Set(frame.cooldown, expires - duration, duration, true)
+                frame:Show()
+                frame:SetID(debuff)
+                frame.buff = buff
+                frame.current = icon
+            end
+        end)
+        
+        -- Hook to modify aura detection in UNIT_AURA_NAMEPLATE
+        hooksecurefunc(BigDebuffs, "UNIT_AURA_NAMEPLATE", function(self, unit)
+            if self.test then return end
+            
+            local frame = self.Nameplates[unit]
+            if not frame then return end
+            
+            if frame.current then return end
+            
+            local now = GetTime()
+            local left, priority, duration, expires, icon, debuff, buff, interrupt = 0, 0
+            
+            for i = 1, 40 do
+                local name, _, ico, _, _, d, e, caster, _, _, id = UnitDebuff(unit, i)
+                if not name then break end
+                
+                
+                if id and not self.Spells[id] and self.SpellsByName[name] then
+                    local mappedId = self.SpellsByName[name].originalId
+                    if mappedId then
+                        local reaction = caster and UnitReaction("player", caster) or 0
+                        local friendlySmokeBomb = mappedId == 212183 and reaction > 4
+                        local p = self:GetNameplatesPriority(mappedId)
+                        if p and p >= priority and not friendlySmokeBomb then
+                            if p > priority or self:IsPriorityBigDebuff(mappedId) or e == 0 or e - now > left then
+                                left = e - now
+                                duration = d
+                                debuff = i
+                                priority = p
+                                expires = e
+                                icon = ico
+                            end
+                        end
+                    end
+                end
+            end
+            
+            for i = 1, 40 do
+                local name, _, ico, _, _, d, e, caster, _, _, id = UnitBuff(unit, i)
+                if not name then break end
+                
+                
+                if id and not self.Spells[id] and self.SpellsByName[name] then
+                    local mappedId = self.SpellsByName[name].originalId
+                    if mappedId then
+                        local p = self:GetNameplatesPriority(mappedId)
+                        if p and p >= priority then
+                            if p > priority or self:IsPriorityBigDebuff(mappedId) or e == 0 or e - now > left then
+                                left = e - now
+                                duration = d
+                                debuff = i
+                                priority = p
+                                expires = e
+                                icon = ico
+                                buff = true
+                            end
+                        end
+                    end
+                end
+            end
+            
+            
+            if debuff and not frame.current then
+                if duration < 1 then duration = 1 end
+                
+                frame.icon:SetTexture(icon)
+                frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                frame.icon:Show()
+                frame.icon:SetAlpha(1)
+                
+                frame.cooldown:SetCooldown(expires - duration, duration)
+                frame:Show()
+                
+                frame:SetID(debuff)
+                frame.buff = buff
+                frame.interrupt = interrupt
+                frame.current = icon
+            end
+        end)
+        
+        -- Hook Refresh position raid frames
+        local original_Refresh = BigDebuffs.Refresh
+        if original_Refresh then
+            function BigDebuffs:Refresh()
+                original_Refresh(self)
+                
+                for unit, attachedFrame in pairs(self.AttachedFrames) do
+                    if attachedFrame and attachedFrame.BigDebuffs then
+                        local max = self.db.profile.raidFrames.maxDebuffs + 1
+                        
+                        for i = 1, max do
+                            local big = attachedFrame.BigDebuffs[i]
+                            if big then
+                                big:ClearAllPoints()
+                                
+                                if i > 1 then
+                                    if self.db.profile.raidFrames.anchor == "INNER" or 
+                                       self.db.profile.raidFrames.anchor == "RIGHT" or
+                                       self.db.profile.raidFrames.anchor == "TOP" then
+                                        big:SetPoint("BOTTOMLEFT", attachedFrame.BigDebuffs[i - 1], "BOTTOMRIGHT", 0, 0)
+                                    elseif self.db.profile.raidFrames.anchor == "LEFT" then
+                                        big:SetPoint("BOTTOMRIGHT", attachedFrame.BigDebuffs[i - 1], "BOTTOMLEFT", 0, 0)
+                                    elseif self.db.profile.raidFrames.anchor == "BOTTOM" then
+                                        big:SetPoint("TOPLEFT", attachedFrame.BigDebuffs[i - 1], "TOPRIGHT", 0, 0)
+                                    end
+                                else
+                                    if self.db.profile.raidFrames.anchor == "INNER" then
+                                        big:SetPoint("BOTTOMLEFT", attachedFrame.debuffFrames[1], "BOTTOMLEFT", 0, 0)
+                                    elseif self.db.profile.raidFrames.anchor == "LEFT" then
+                                        big:SetPoint("BOTTOMRIGHT", attachedFrame, "BOTTOMLEFT", 0, 1)
+                                    elseif self.db.profile.raidFrames.anchor == "RIGHT" then
+                                        big:SetPoint("BOTTOMLEFT", attachedFrame, "BOTTOMRIGHT", 0, 1)
+                                    elseif self.db.profile.raidFrames.anchor == "TOP" then
+                                        big:SetPoint("BOTTOMLEFT", attachedFrame, "TOPLEFT", 0, 1)
+                                    elseif self.db.profile.raidFrames.anchor == "BOTTOM" then
+                                        big:SetPoint("TOPLEFT", attachedFrame, "BOTTOMLEFT", 0, 1)
+                                    end
                                 end
                             end
-                            if parentData then
-                                spellData = parentData
-                            end
                         end
-                        auraType = spellData.type
-                    end
-                    
-                    spellId = id
-                end
-            end
-        end
-    end
-
-    local n, id, ico, d, e = self:GetInterruptFor(unit)
-    if n then
-        local p = self:GetAuraPriority(n, id, unit)
-        if p and p > priority or p == priority and e - now > left then
-            left = e - now
-            duration = d
-            isAura = true
-            priority = p
-            expires = e
-            icon = ico
-            auraType = "interrupts"
-            spellId = id
-        end
-    end
-
-    local guid = UnitGUID(unit)
-    if self.stances and self.stances[guid] then
-        local stanceId = self.stances[guid].stance
-        if stanceId then
-            local stanceName = GetSpellInfo(stanceId)
-            if stanceName and (self.Spells[stanceId] or self.SpellsByName[stanceName]) then
-                n, _, ico = GetSpellInfo(stanceId)
-                local p = self:GetAuraPriority(n, stanceId, unit)
-                if p and p >= priority then
-                    left = 0
-                    duration = 0
-                    isAura = true
-                    priority = p
-                    expires = 0
-                    icon = ico
-                    
-                    local spellData = self.Spells[stanceId] or self.SpellsByName[stanceName]
-                    if spellData then
-                        auraType = spellData.type
-                    end
-                    
-                    spellId = stanceId
-                end
-            end
-        end
-    end
-
-    if isAura then
-        if frame.blizzard then
-            SetPortraitToTexture(frame.icon, icon)
-            
-            local frameName = frame:GetName()
-            if frameName then
-                local fixes = {
-                    BigDebuffsplayerUnitFrame = {PlayerPortrait, 0.5, -0.7},
-                    BigDebuffsplayerFAKEUnitFrame = {PlayerPortrait, 0.5, -0.7},
-                    BigDebuffspetUnitFrame = {PetPortrait, -1.4, -0.5, 1.5},
-                    BigDebuffstargetUnitFrame = {TargetFramePortrait, -0.4, -0.7},
-                    BigDebuffstargettargetUnitFrame = {TargetFrameToTPortrait, -0.1, -0.5, 4.2},
-                    BigDebuffsfocusUnitFrame = {FocusFramePortrait, -0.4, -0.7},
-                    BigDebuffsfocustargetUnitFrame = {FocusFrameToTPortrait, -0.1, -0.5, 4.2},
-                }
-                
-                local fix = fixes[frameName]
-                if fix then
-                    local portrait, x, y, sizeAdd = fix[1], fix[2], fix[3], fix[4] or 0
-                    if portrait then
-                        frame:ClearAllPoints()
-                        frame:SetPoint("CENTER", portrait, "CENTER", x, y)
-                        frame:SetSize(portrait:GetHeight() + sizeAdd, portrait:GetWidth() + sizeAdd)
                     end
                 end
             end
-        else
-            frame.icon:SetTexture(icon)
         end
-
-        if auraType == "interrupts" then
-            if frame.interruptBorder then
-                local color = self.db.profile.unitFrames.interruptBorderColor or {1, 0, 0, 1}
-                if color[4] > 0 then
-                    frame.interruptBorder:SetVertexColor(color[1], color[2], color[3], color[4])
-                    frame.interruptBorder:ClearAllPoints()
-                    
-                    local isGladiusFrame = frame:GetName() and (frame:GetName():match("arena%d") ~= nil) and unit:match("arena%d") ~= nil
-                    
-                    if isGladiusFrame then
-                        frame.interruptBorder:SetWidth(frame:GetWidth() * 1.5)
-                        frame.interruptBorder:SetHeight(frame:GetHeight() * 1.5)
-                    else
-                        frame.interruptBorder:SetWidth(frame:GetWidth() * 1.1)
-                        frame.interruptBorder:SetHeight(frame:GetHeight() * 1.1)
-                    end
-                    frame.interruptBorder:SetPoint("CENTER", frame, "CENTER", 0, 0)
-                    frame.interruptBorder:Show()
-                else
-                    frame.interruptBorder:Hide()
-                end
-            end
-        else
-            if frame.interruptBorder then
-                frame.interruptBorder:Hide()
-            end
-        end
-
-        -- Cooldown
-        if duration > 0.2 then
-            if self.db.profile.unitFrames.circleCooldown and frame.blizzard then
-                frame.CircleCooldown:SetCooldown(expires - duration, duration)
-                frame.cooldown:Hide()
-            else
-                frame.cooldown:SetCooldown(expires - duration, duration)
-                frame.CircleCooldown:Hide()
-            end
-
-            if self.db.profile.unitFrames.hideCDanimation then
-                frame.cooldown:SetAlpha(0)
-                frame.CircleCooldown:SetAlpha(0)
-            else
-                frame.cooldown:SetAlpha(0.85)
-                frame.CircleCooldown:SetAlpha(1)
-            end
-
-            if self.db.profile.unitFrames.customTimer then
-                frame.timeEnd = (expires - duration) + duration
-            else
-                frame.timeEnd = GetTime()
-            end
-
-            frame.cooldownContainer:Show()
-        else
-            frame.timeEnd = GetTime()
-            frame.cooldownContainer:Hide()
-        end
-
-        frame:Show()
-        frame.current = icon
-        frame.currentAuraType = auraType
-        frame.currentSpellId = spellId
-    else
-        if frame.anchor and frame.blizzard and Adapt and Adapt.portraits[frame.anchor] then
-            Adapt.portraits[frame.anchor].modelLayer:SetFrameStrata("LOW")
-        else
-            frame:Hide()
-            frame.current = nil
-            frame.currentAuraType = nil
-            frame.currentSpellId = nil
-            if frame.interruptBorder then
-                frame.interruptBorder:Hide()
-            end
-        end
+        
+        -- Save
+        _G.BigDebuffsInstance = BigDebuffs
+        
+        -- attach loop
+        EnableAttachLoop()
+        
+        
+        self:UnregisterEvent("ADDON_LOADED")
+        
+    elseif event == "GROUP_ROSTER_UPDATE" or event == "RAID_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
+        
+        EnableAttachLoop()
     end
-end
-
-local original_Test = BigDebuffs.Test
-function BigDebuffs:Test()
-    if original_Test then
-        original_Test(self)
-    end
-    
-    if self.test then
-        print("|cff00ff00BigDebuffs Test Mode:|r ENABLED")
-    else
-        print("|cffff0000BigDebuffs Test Mode:|r DISABLED")
-    end
-end
+end)
