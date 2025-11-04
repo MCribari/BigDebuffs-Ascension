@@ -1,4 +1,7 @@
-if GetAccountExpansionLevel() ~= 2 then
+-- BigDebuffs Ascension - Wrath spell list
+-- Compatible with Ascension/Project Ascension servers
+
+if GetAccountExpansionLevel() ~= 0 then
 	return
 end
 
@@ -360,6 +363,8 @@ addon.Spells = {
     [53562] = { type = CROWD_CONTROL, }, -- Ravage (Pet)
     [55509] = { type = ROOT, }, -- Venom Web Spray (Pet)
     [60210] = { type = CROWD_CONTROL, }, -- Freezing Arrow Effect
+	[209790] = { type = CROWD_CONTROL, }, -- Freezing Arrow
+	[14309] = { type = CROWD_CONTROL, }, -- Freezing Trap Effect
 
     [27046] = { type = BUFF_DEFENSIVE }, -- Mend Pet
     [13159] = { type = BUFF_OFFENSIVE }, -- Aspect of the Pack
